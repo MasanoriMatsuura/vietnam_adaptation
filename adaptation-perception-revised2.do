@@ -81,6 +81,13 @@ gen irrig = (ecosystem == 1)
 label var irrig "Irrigation"
 
 
+foreach x in ln_seed ln_labor ln_tfert {
+gen `x'_sq = `x'*`x'
+}
+gen ln_seed_labor = ln_seed*ln_labor
+gen ln_seed_fert = ln_seed*ln_tfert
+gen ln_labor_fert = ln_labor*ln_tfert
+
 ******** Descriptive ********
 rename ccstrat1 FAS1
 rename fachg1 FAS2
@@ -104,7 +111,18 @@ label var m_stress3 "Salinity"
 label var m_stress6 "Sea-level rise"
 label var m_stress2 "Storm"
 label var m_stress7 "None"
- 
+
+
+* variables: IV
+for num 1/3: bysort village: egen ivX = sum(FASX)
+bysort village: egen n_vil = count(FAS1)
+drop if n_vil < 10
+for num 1/3: replace ivX = ivX - 1 if FASX == 1
+for num 1/3: replace ivX = ivX/(n_vil - 1)
+
+save data_analysis, replace
+
+******** Table 2: Descriptive statistics ********
 eststo CVN1: qui estpost su prod area Seed Labor Tfert FAS1 FAS2 FAS3 ///
 	hh_age hhschl hhyrfarm tothsz if region == "CVN" & season == 1
 eststo RRD1: qui estpost su prod area Seed Labor Tfert FAS1 FAS2 FAS3 ///
@@ -117,90 +135,65 @@ eststo RRD2: qui estpost su prod area Seed Labor Tfert ///
 	if region == "RRD" & season == 2
 eststo Diff2: qui estpost ttest prod area Seed Labor Tfert ///
 	if season == 2, by(region) // Diff.
-esttab CVN1 RRD1 Diff1 using $output\table1_1.csv, ///
+esttab CVN1 RRD1 Diff1 using $output\table2_1.csv, ///
 	label nogap nonotes nomtitle nonumber b(%4.3f) ///
 	cells("mean(pattern(1 1 0) fmt(3)) sd(pattern(1 1 0) fmt(3)) b(star pattern(0 0 1) fmt(3)) se(pattern(0 0 1) fmt(3)) ") ///
 	mgroups("CVN" "RRD" "Difference", pattern(1 1 0)) replace
 	
-esttab CVN2 RRD2 Diff2 using $output\table1_2.csv, ///
+esttab CVN2 RRD2 Diff2 using $output\table2_2.csv, ///
 	label nogap nonotes nomtitle nonumber ///
 	cells("mean(pattern(1 1 0) fmt(3)) sd(pattern(1 1 0) fmt(3)) b(star pattern(0 0 1) fmt(3)) se(pattern(0 0 1) fmt(3)) ") ///
 	mgroups("CVN" "RRD" "Difference", pattern(1 1 0)) replace
 estimates drop CVN1 RRD1 Diff1 CVN2 RRD2 Diff2
 
 
-******** Regression: adaptation and production ********
+******** Table 3: adaptation and production ********
+global FAS "FAS1 FAS2 FAS3"
+global res "res1 res2 res3"
 global xvar "ln_seed ln_labor ln_tfert"
-foreach x in ln_seed ln_labor ln_tfert {
-gen `x'_sq = `x'*`x'
-}
-gen ln_seed_labor = ln_seed*ln_labor
-gen ln_seed_fert = ln_seed*ln_tfert
-gen ln_labor_fert = ln_labor*ln_tfert
-global xvar2 "ln_seed ln_labor ln_tfert ln_seed_sq ln_labor_sq ln_tfert_sq ln_seed_labor ln_seed_fert ln_labor_fert"
 global socio "hh_age hhschl hhyrfarm tothsz"
 
-* variables: IV
-for num 1/3: bysort village: egen ivX = sum(FASX)
-bysort village: egen n_vil = count(FAS1)
-drop if n_vil < 10
-for num 1/3: replace ivX = ivX - 1 if FASX == 1
-for num 1/3: replace ivX = ivX/(n_vil - 1)
 
-* OLS 
-regress ln_yield FAS1 $xvar $socio irrig dry $vil_dum
-regress ln_yield FAS2 $xvar $socio irrig dry $vil_dum
-regress ln_yield FAS3 $xvar $socio irrig dry $vil_dum
-
-* 2SLS
-eststo model1a: ivregress 2sls ln_yield (FAS1 = iv1 ) $xvar irrig dry $vil_dum
-qui estadd local prov "Yes"
-qui estadd local hh "No"
-eststo model1b: ivregress 2sls ln_yield (FAS1 = iv1 ) $xvar $socio irrig dry $vil_dum
+* OLS
+eststo model2: reg ln_yield $FAS $xvar $socio dry i.prov
 qui estadd local prov "Yes"
 qui estadd local hh "Yes"
 
-eststo model2a: ivregress 2sls ln_yield (FAS2 = iv2 ) $xvar irrig dry $vil_dum
+* 2SRI: 1st stage
+probit FAS1 iv1 $xvar $socio dry i.prov
+predict yhat1
+gen res1 = FAS1 - yhat1
+
+probit FAS2 iv2 $xvar $socio dry i.prov
+predict yhat2
+gen res2 = FAS2 - yhat2
+
+probit FAS3 iv3 $xvar $socio dry i.prov
+predict yhat3
+gen res3 = FAS3 - yhat3
+
+* 2SRI: 2nd stage
+eststo model3: bootstrap: reg ln_yield $FAS $xvar dry i.prov $res
 qui estadd local prov "Yes"
 qui estadd local hh "No"
-eststo model2b: ivregress 2sls ln_yield (FAS2 = iv2 ) $xvar $socio irrig dry $vil_dum
+
+eststo model4: bootstrap: reg ln_yield $FAS $xvar $socio dry i.prov $res
 qui estadd local prov "Yes"
 qui estadd local hh "Yes"
-
-eststo model3a: ivregress 2sls ln_yield (FAS3 = iv3 ) $xvar irrig dry $vil_dum
-qui estadd local prov "Yes"
-qui estadd local hh "No"
-eststo model3b: ivregress 2sls ln_yield (FAS3 = iv3 ) $xvar $socio irrig dry $vil_dum
-qui estadd local prov "Yes"
-qui estadd local hh "Yes"
-
-eststo model4a: ivregress 2sls ln_yield (FAS1 FAS2 FAS3 = iv1 iv2 iv3) ///
-	$xvar irrig dry $vil_dum
-qui estadd local prov "Yes"
-qui estadd local hh "No"
-eststo model4b: ivregress 2sls ln_yield (FAS1 FAS2 FAS3 = iv1 iv2 iv3) ///
-	$xvar $socio irrig dry $vil_dum
-qui estadd local prov "Yes"
-qui estadd local hh "Yes"
-
-ivregress 2sls ln_yield (FAS1 = iv1 ) $xvar2 $socio dry i.prov if irrig == 0
-ivregress 2sls ln_yield (FAS2 = iv2 ) $xvar2 $socio dry i.prov if irrig == 0
-ivregress 2sls ln_yield (FAS3 = iv3 ) $xvar2 $socio dry i.prov if irrig == 0
-ivregress 2sls ln_yield (FAS1 = iv1 ) $xvar2 $socio dry i.prov if irrig == 1
-ivregress 2sls ln_yield (FAS2 = iv2 ) $xvar2 $socio dry i.prov if irrig == 1
-ivregress 2sls ln_yield (FAS3 = iv3 ) $xvar2 $socio dry i.prov if irrig == 1
 
 * table
-esttab model1a model1b model2a model2b model3a model3b model4a model4b ///
-	using $output\table3.csv, ///
+esttab model2 model3 model4 ///
+	using $output\table3_1.csv, ///
 	se label nogap nonotes nomtitles b(%4.3f) star(* 0.10 ** 0.05 *** 0.01) ///
-	s(prov hh N, fmt(%9.3f %9.3f %9.0g) ///
+	s(prov hh r2 N, fmt(%9.3f %9.3f %9.3f %9.0g) ///
 	labels("Province FE" "Household characteristics" "R squared" "Observations")) ///
-	keep(FAS1 FAS2 FAS3 $xvar irrig dry _cons) ///
-	order(FAS1 FAS2 FAS3)  replace
-estimates drop model1a model1b model2a model2b model3a model3b model4a model4b
+	keep(FAS1 FAS3 FAS2 ln_seed ln_labor ln_tfert dry ///
+	res1 res2 res3 _cons) ///
+	mgroups("OLS" "2SRI" "2SRI", pattern(1 0 1 0 1 0) span)  replace
+estimates drop model2 model3 model4
 
-******** Regression: adaptation and downside risk ********
+
+******** Table 3: adaptation and downside risk ********
 * estimates skewness
 foreach x in $xvar ln_yield {
 	bysort commune season: egen `x'_bar = mean(`x')
@@ -219,88 +212,188 @@ gen skewness = residual_risk^3
 reg skewness FAS1 $xvar dry $vil_dum
 reg skewness FAS2 $xvar dry $vil_dum
 reg skewness FAS3 $xvar dry $vil_dum
-eststo model02: reg skewness $FAS $xvar dry
-
-* 2SLS
-eststo model1a: ivregress 2sls skewness (FAS1 = iv1 ) $xvar irrig dry $vil_dum
-qui estadd local prov "Yes"
-qui estadd local hh "No"
-eststo model1b: ivregress 2sls skewness (FAS1 = iv1 ) $xvar $socio irrig dry $vil_dum
+eststo model2: reg skewness $FAS $xvar $socio dry i.prov
 qui estadd local prov "Yes"
 qui estadd local hh "Yes"
 
-eststo model2a: ivregress 2sls skewness (FAS2 = iv2 ) $xvar irrig dry $vil_dum
+* 2SRI: 2nd stage
+eststo model3: bootstrap: reg skewness $FAS $xvar dry i.prov $res
 qui estadd local prov "Yes"
 qui estadd local hh "No"
-eststo model2b: ivregress 2sls skewness (FAS2 = iv2 ) $xvar $socio irrig dry $vil_dum
+eststo model4: bootstrap: reg skewness $FAS $xvar $socio dry i.prov $res
 qui estadd local prov "Yes"
 qui estadd local hh "Yes"
-
-eststo model3a: ivregress 2sls skewness (FAS3 = iv3 ) $xvar irrig dry $vil_dum
-qui estadd local prov "Yes"
-qui estadd local hh "No"
-eststo model3b: ivregress 2sls skewness (FAS3 = iv3 ) $xvar $socio irrig dry $vil_dum
-qui estadd local prov "Yes"
-qui estadd local hh "Yes"
-
-eststo model4a: ivregress 2sls skewness (FAS1 FAS2 FAS3 = iv1 iv2 iv3) ///
-	$xvar irrig dry $vil_dum
-qui estadd local prov "Yes"
-qui estadd local hh "No"
-eststo model4b: ivregress 2sls skewness (FAS1 FAS2 FAS3 = iv1 iv2 iv3) ///
-	$xvar $socio irrig dry $vil_dum
-qui estadd local prov "Yes"
-qui estadd local hh "Yes"
-
-
-* Falcification test
-eststo fal1: reg ln_yield iv1 $xvar i.season i.com if ccstrat1 == 0
-eststo fal2: reg ln_yield iv2 $xvar i.season i.com if ccstrat2 == 0
-eststo fal3: reg ln_yield iv6 $xvar i.season i.prov if ccstrat6 == 0
-eststo fal4: reg skewness iv1 $xvar i.season i.com if ccstrat1 == 0
-eststo fal5: reg skewness iv2 $xvar i.season i.prov if ccstrat2 == 0
-eststo fal6: reg skewness iv6 $xvar i.season i.prov if ccstrat6 == 0
 
 * table
-esttab model1a model1b model2a model2b model3a model3b model4a model4b ///
+esttab model2 model3 model4 ///
+	using $output\table3_2.csv, ///
+	se label nogap nonotes nomtitles b(%4.3f) star(* 0.10 ** 0.05 *** 0.01) ///
+	s(prov hh r2 N, fmt(%9.3f %9.3f %9.3f %9.0g) ///
+	labels("Province FE" "Household characteristics" "R squared" "Observations")) ///
+	keep(FAS1 FAS3 FAS2 ln_seed ln_labor ln_tfert dry ///
+	res1 res2 res3 _cons) ///
+	order(FAS1 FAS2 FAS3)  replace
+estimates drop model2 model3 model4
+drop res1 res2 res3
+
+******** Figure 5: Geographical heterogeneity ********
+use data_analysis, clear
+global FAS "FAS1 FAS2 FAS3"
+global res_r "res1 res2 res3"
+global res_c "res4 res5 res6"
+global res_d "res7 res8 res9"
+global res_w "res10 res11 res12"
+global xvar "ln_seed ln_labor ln_tfert"
+global socio "hh_age hhschl hhyrfarm tothsz"
+
+label var FAS1 "FAS1"
+label var FAS2 "FAS2"
+label var FAS3 "FAS3"
+
+******** Productivity:RRD
+probit FAS1 iv1 $xvar $socio dry i.prov if region == "RRD"
+predict yhat1
+gen res1 = FAS1 - yhat1
+probit FAS2 iv2 $xvar $socio dry i.prov if region == "RRD"
+predict yhat2
+gen res2 = FAS2 - yhat2
+probit FAS3 iv3 $xvar $socio dry i.prov if region == "RRD"
+predict yhat3
+gen res3 = FAS3 - yhat3
+
+eststo model1: bootstrap: reg ln_yield $FAS $xvar $socio dry i.prov $res_r if region == "RRD"
+qui estadd local prov "Yes"
+qui estadd local hh "Yes"
+
+******** Productivity:CVN
+probit FAS1 iv1 $xvar $socio dry i.prov if region == "CVN"
+predict yhat4
+gen res4 = FAS1 - yhat4
+probit FAS2 iv2 $xvar $socio dry i.prov if region == "CVN"
+predict yhat5
+gen res5 = FAS2 - yhat5
+probit FAS3 iv3 $xvar $socio dry i.prov if region == "CVN"
+predict yhat6
+gen res6 = FAS3 - yhat6
+
+eststo model2: bootstrap: reg ln_yield $FAS $xvar $socio dry i.prov $res_c if region == "CVN"
+
+coefplot (model1, label(RRD)) (model2, label(CVN)), keep($FAS) replace
+graph export $output/figure5_a.jpg, as(jpg) quality(100) replace
+
+******** Downside risk
+foreach x in $xvar ln_yield {
+	bysort commune season: egen `x'_bar = mean(`x')
+	}
+
+reg ln_yield $xvar if season == 1
+gen residual_risk = ln_yield - ln_yield_bar - e(b)[1,1]*(ln_seed - ln_seed_bar) ///
+	- e(b)[1,2]*(ln_labor - ln_labor_bar) - e(b)[1,3]*(ln_tfert - ln_tfert_bar)
+reg ln_prod $xvar if season == 2
+replace residual_risk = ln_yield - ln_yield_bar - e(b)[1,1]*(ln_seed - ln_seed_bar) ///
+	- e(b)[1,2]*(ln_labor - ln_labor_bar) - e(b)[1,3]*(ln_tfert - ln_tfert_bar) ///
+	if season == 2
+gen skewness = residual_risk^3
+
+******** 2SRI: 2nd stage
+eststo model3: bootstrap: reg skewness $FAS $xvar $socio dry i.prov $res_r if region == "RRD"
+
+eststo model4: bootstrap: reg skewness $FAS $xvar $socio dry i.prov $res_c if region == "CVN"
+
+coefplot (model3, label(RRD)) (model4, label(CVN)), keep($FAS) replace
+graph export $output/figure5_b.jpg, as(jpg) quality(100) replace
+
+******** Figure 6: Seasonal heterogeneity ********
+******** Productivity:Dry
+probit FAS1 iv1 $xvar $socio dry i.prov if season == 1
+predict yhat7
+gen res7 = FAS1 - yhat7
+probit FAS2 iv2 $xvar $socio dry i.prov if season == 1
+predict yhat8
+gen res8 = FAS2 - yhat8
+probit FAS3 iv3 $xvar $socio dry i.prov if season == 1
+predict yhat9
+gen res9 = FAS3 - yhat9
+
+eststo model5: bootstrap: reg ln_yield $FAS $xvar $socio dry i.prov $res_d if season == 1
+
+******** Productivity:Wet
+probit FAS1 iv1 $xvar $socio dry i.prov if season == 2
+predict yhat10
+gen res10 = FAS1 - yhat10
+probit FAS2 iv2 $xvar $socio dry i.prov if season == 2
+predict yhat11
+gen res11 = FAS2 - yhat11
+probit FAS3 iv3 $xvar $socio dry i.prov if season == 2
+predict yhat12
+gen res12 = FAS3 - yhat12
+
+eststo model6: bootstrap: reg ln_yield $FAS $xvar $socio dry i.prov $res_w if season == 2
+
+coefplot (model6, label(Wet)) (model5, label(Dry)), keep($FAS) replace
+graph export $output/figure6_a.jpg, as(jpg) quality(100) replace
+
+******** Downside risk
+******** 2SRI: 2nd stage
+eststo model7: bootstrap: reg skewness $FAS $xvar $socio dry i.prov $res_d if season == 1
+
+eststo model8: bootstrap: reg skewness $FAS $xvar $socio dry i.prov $res_w if season == 2
+coefplot (model8, label(Wet)) (model7, label(Dry)) , keep($FAS) replace
+graph export $output/figure6_b.jpg, as(jpg) quality(100) replace
+
+******** Table 4: perception ********
+eststo model9: reg FAS1 m_stress5 m_stress1  m_stress4 m_stress3 m_ins_rttrain m_ins_rt_cgvt m_ins_rt_lgvt $socio i.prov, robust
+qui estadd local prov "Yes"
+qui estadd local hh "Yes"
+
+eststo model10: reg FAS2 m_stress5 m_stress1  m_stress4 m_stress3 m_ins_cpacc winfo1 winfo6 winfo8 winfo9 winfo10 $socio i.prov, robust
+qui estadd local prov "Yes"
+qui estadd local hh "Yes"
+
+eststo model11: reg FAS3 m_stress5 m_stress1 m_stress4 m_stress3 $socio i.prov, robust
+qui estadd local prov "Yes"
+qui estadd local hh "Yes"
+
+******** table 
+esttab model9 model10 model11 ///
 	using $output\table4.csv, ///
 	se label nogap nonotes nomtitles b(%4.3f) star(* 0.10 ** 0.05 *** 0.01) ///
-	s(prov hh N, fmt(%9.3f %9.3f %9.0g) ///
+	s(prov hh r2 N, fmt(%9.3f %9.3f %9.3f %9.0g) ///
 	labels("Province FE" "Household characteristics" "R squared" "Observations")) ///
-	keep(FAS1 FAS2 FAS3 $xvar irrig dry _cons) ///
-	order(FAS1 FAS2 FAS3)  replace
-estimates drop model1a model1b model2a model2b model3a model3b model4a model4b
+	order(m_stress5 m_stress1 m_stress4 m_stress3 m_ins_rttrain m_ins_rt_cgvt m_ins_rt_lgvt m_ins_cpacc winfo1 winfo6 winfo8 winfo9 winfo10) ///
+  replace
+estimates drop model9 model10 model11
 
-******** Figure: perception ********
+******** Figure 4: perception ********
 set scheme cleanplots, perm
 graph hbar (mean) m_stress5 m_stress1 m_stress4 m_stress3 m_stress6 m_stress7, ///
-	ylabel(0(0.2)1.0) ///
-	bargap(10) title("Climate stress in the area") ///
+	ylabel(0(0.2)1.0) over(region) ///
+	bargap(-10) ///
 	legend(order(1 "Heat" 2 "Flood" 3 "Drought" 4 "Salinity" 5 "Sea-level rise" 6 "None") col(3) position(6))
-graph export $output/perception.jpg, as(jpg) name("Graph") quality(100) replace
-gen province2 = 1
-replace province2 = 2 if province == "Nam Dinh"
-replace province2 = 3 if province == "Ha Tinh"
-replace province2 = 4 if province == "Quang Ngai"
-label define province2 1 "Thai Binh (RRD)" 2 "Nam Dinh (RRD)" 3 "Ha Tinh (CVN)" 4 "Quang Ngai (CVN)"
-label values province2 province2
-graph hbar (mean) m_stress5 m_stress1 m_stress4 m_stress3 m_stress6 m_stress2, ///
-	ylabel(0(0.2)1.0) over(province2) ///
-	bargap(-10) title("Climate stress in the area") ///
-	legend(order(1 "Heat" 2 "Flood" 3 "Drought" 4 "Salinity" 5 "Sea-level rise" 6 "Storm") col(3) position(6))
+graph export $output/figure4.jpg, as(jpg) name("Graph") quality(100) replace
 
+******** Figure 4: perception ********
+use data_analysis, clear 
+global FAS "FAS1 FAS2 FAS3"
+global res "res1 res2 res3"
+global xvar "ln_seed ln_labor ln_tfert"
+global socio "hh_age hhschl hhyrfarm tothsz"
 
-graph hbar (mean) temp1 temp2 temp6 temp5, ylabel(0(0.2)0.8) over(province2) ///
-	bargap(-10) title("Change in temprature") name(g1, replace) ///
-	legend(order(1 "Increase" 2 "Decrease" 3 "Irregular change" 4 "None") col(4) position(6))
-graph hbar (mean) rain4 rain3 rain6 rain5, ylabel(0(0.2)0.8) over(province2) ///
-	bargap(-10) title("Change in rainfall") name(g2, replace) ///
-	legend(order(1 "High" 2 "Low" 3 "Irregular change" 4 "None") col(4) position(6)) 
-graph hbar (mean) drought4 drought3 drought6 drought5, ylabel(0(0.2)0.8) over(province2) ///
-	bargap(-10) title("Change in drought frequency") name(g3, replace) ///
-	legend(order(1 "High" 2 "Low" 3 "Irregular change" 4 "None") col(4) position(6)) 
-graph hbar (mean) flood1 flood2 flood6 flood4, ylabel(0(0.2)0.8) over(province2) ///
-	bargap(-10) title("Change in flood frequency") name(g4, replace) ///
-	legend(order(1 "Frequent" 2 "Less frequent" 3 "Irregular change" 4 "None") col(4) position(6))
-grc1leg g1 g2 g3 g4
-graph export $output/figure/perception2.jpg, as(jpg) name("Graph") quality(100) replace
+* 2SRI: 1st stage
+eststo model01: probit FAS1 iv1 $xvar $socio dry i.prov
+qui estadd local prov "Yes"
+
+eststo model02: probit FAS2 iv2 $xvar $socio dry i.prov
+qui estadd local prov "Yes"
+
+eststo model03: probit FAS3 iv3 $xvar $socio dry i.prov
+qui estadd local prov "Yes"
+
+esttab model01 model02 model03 ///
+	using $output\tableA1.csv, ///
+	se label nogap nonotes nomtitles b(%4.3f) star(* 0.10 ** 0.05 *** 0.01) ///
+	s(prov N, fmt(%9.3f %9.0g) ///
+	labels("Province FE"  "Observations")) ///
+	order(iv1 iv2 iv3) ///
+	mgroups("FAS1" "FAS2" "FAS3", pattern(1 0 1 0 1 0) span)  replace
+estimates drop model01 model02 model03
